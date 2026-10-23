@@ -1,0 +1,12 @@
+[package]
+name = "btrfs-patrol"
+version = "0.1.0"
+edition = "2024"
+description = "btrfs snapshot manager and rollback tool for Arch Linux, with a ratatui TUI"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/jccl1706/btrfs-patrol-rs"
+readme = "README.md"
+keywords = ["btrfs", "snapshots", "rollback", "arch-linux", "tui"]
+categories = ["command-line-utilities", "filesystem"]
+
+[dependencies]

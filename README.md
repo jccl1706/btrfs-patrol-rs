@@ -8,22 +8,47 @@ for Fedora) for Arch: snapshots before every pacman transaction and once a
 day, a full-screen browser for them, and one checked command to put the
 system back.
 
-> **Status: phase 1 of 3 - read-only.** It lists, filters, compares and
-> browses snapshots, and checks the setup; it does not take or change any
-> yet. Nothing here touches a system until the phase that needs it is
-> finished and tested in a VM. Snapshots are not backups.
+> **Status: phases 1 and 2 of 3.** It takes, lists, compares, keeps,
+> prunes and deletes snapshots - by hand, before every pacman transaction,
+> and once a day - and stores the kernel that goes with each. Rollback
+> (phase 3) is next, and is tested in a VM before anything else. Snapshots
+> are not backups.
+
+## Install
+
+```sh
+git clone https://github.com/jccl1706/btrfs-patrol-rs
+cd btrfs-patrol-rs/packaging/arch
+makepkg -si                    # builds, runs the tests, installs btrfs-patrol-git
+sudo btrfs-patrol setup        # once: shows its plan, then asks
+```
+
+`setup` only does what is missing: on a standard layout (with `@snapshots`
+already mounted at `/.snapshots`) that is making the store readable only by
+root and enabling the daily timer. It can also create and mount
+`@snapshots`, and it removes `subvolid=` from fstab, which would silently
+undo a rollback. `--dry-run` shows the plan and changes nothing.
+
+From then on a snapshot is taken **before every pacman transaction** -
+described as `pacman -Syu: linux, mesa, firefox +31 more` - and **once a
+day**, and the oldest are pruned beyond `max_snapshots` (kept ones never).
 
 ## Use
 
 ```sh
-cargo build --release          # target/release/btrfs-patrol
-
-btrfs-patrol check             # does the layout match the configuration?
-btrfs-patrol list              # every snapshot
-btrfs-patrol list kind=pacman  # ... or those a selector matches
-sudo btrfs-patrol diff 12 15   # what changed between two snapshots
-btrfs-patrol tui               # browse them full-screen
+sudo btrfs-patrol tui                      # the dashboard: browse, take, keep, compare, delete
+sudo btrfs-patrol snapshot -d "before kde" # take one now (-k to keep it, -s home for one subvolume)
+sudo btrfs-patrol list                     # every snapshot
+sudo btrfs-patrol list kind=pacman         # ... or those a selector matches
+sudo btrfs-patrol diff 12 15               # what changed between two snapshots
+sudo btrfs-patrol keep 12                  # never prune it (unkeep to undo)
+sudo btrfs-patrol describe 12 "known good"
+sudo btrfs-patrol delete 3-9               # asks first; -y to skip
+sudo btrfs-patrol prune                    # apply max_snapshots now
+btrfs-patrol check                         # does the layout match the configuration?
 ```
+
+The store is readable only by root, so everything but `check` needs sudo.
 
 No configuration is needed on the standard layout below; `btrfs-patrol
 example-config` prints the file with its defaults, to copy to
@@ -40,6 +65,7 @@ A dashboard in Tokyo Night: the snapshot list with an icon for each kind
 beside it (under it on narrow terminals), and the disk's use in the header.
 
 - `↑↓` move, `Tab` / `←→` switch subvolume, `Enter` full details, `?` help
+- `n` new snapshot, `d` describe, `p` keep (pin), `x` delete (then `y`)
 - `/` search as you type: plain text is fuzzy (`msa upg` finds "upgrade
   mesa"), and a selector (`kind=pacman`, `keep=yes`, `10-20`) works as on
   the command line
@@ -82,8 +108,9 @@ the matching pair back on the ESP when it rolls back - which also makes
 
 1. ✅ **Read-only** - the snapshot store, selectors, `list`, `check`,
    `diff`, and the TUI (browse, detail, filter, compare).
-2. **Taking snapshots** - `snapshot`, `describe`, `keep`, `delete`, `prune`,
-   `setup`, the daily systemd timer, pacman (ALPM) hooks, a PKGBUILD.
+2. ✅ **Taking snapshots** - `snapshot`, `describe`, `keep`, `delete`,
+   `prune`, kernels stored per snapshot, `setup`, the daily systemd timer,
+   pacman (ALPM) hooks, the TUI's actions, a PKGBUILD.
 3. **Rollback** - with kernels stored per snapshot, and systemd-boot entries
    to boot a snapshot. Tested in a VM with the same layout before anything
    else.

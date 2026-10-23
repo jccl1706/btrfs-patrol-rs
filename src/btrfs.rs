@@ -34,6 +34,19 @@ where
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+pub fn create_snapshot(source: &Path, destination: &Path, readonly: bool) -> Result<()> {
+    let mut args = vec![OsStr::new("subvolume"), OsStr::new("snapshot")];
+    if readonly {
+        args.push(OsStr::new("-r"));
+    }
+    args.extend([source.as_os_str(), destination.as_os_str()]);
+    run(args).map(drop)
+}
+
+pub fn delete_subvolume(path: &Path) -> Result<()> {
+    run([OsStr::new("subvolume"), OsStr::new("delete"), path.as_os_str()]).map(drop)
+}
+
 /// Whether `path`, on a btrfs filesystem, is the top directory of a subvolume.
 pub fn is_subvolume(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|m| m.ino() == SUBVOLUME_ROOT_INODE)

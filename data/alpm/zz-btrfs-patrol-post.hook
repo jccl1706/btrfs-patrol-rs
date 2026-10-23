@@ -1,0 +1,15 @@
+# A snapshot after each transaction, when [pacman] post_snapshot = true.
+# zz- so it runs after every other hook (mkinitcpio included).
+[Trigger]
+Operation = Upgrade
+Operation = Install
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Taking a btrfs-patrol snapshot...
+Depends = btrfs-progs
+When = PostTransaction
+Exec = /usr/bin/btrfs-patrol pacman-hook post
+NeedsTargets

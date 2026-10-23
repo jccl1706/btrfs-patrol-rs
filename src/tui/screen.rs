@@ -32,17 +32,32 @@ pub enum Key {
     Enter,
     Esc,
     Backspace,
+    Delete,
     Char(char),
 }
 
 /// What the event loop has to do after a key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     None,
     Quit,
     Reload,
     /// Compare these two snapshots, older first.
     Compare(u64, u64),
+    /// Take snapshots with this description: of one subvolume, or of every
+    /// managed one when the "all" tab is open.
+    Snapshot(String, Option<String>),
+    Describe(u64, String),
+    Keep(u64, bool),
+    Delete(u64),
+}
+
+/// What the line at the bottom is asking for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Prompt {
+    NewSnapshot,
+    Describe(u64),
+    ConfirmDelete(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +67,8 @@ pub enum Mode {
     Search,
     /// A popup or a full page over the dashboard.
     Overlay,
+    /// Asking something at the bottom: a description, a confirmation.
+    Prompt,
 }
 
 /// What a piece of text means, which the view turns into a colour.
@@ -91,6 +108,8 @@ pub enum Hit {
 
 pub const ALL: &str = "all";
 
+const NEEDS_ROOT: &str = "taking and changing snapshots needs root: run 'sudo btrfs-patrol tui'";
+
 #[derive(Debug)]
 pub struct Screen {
     pub snapshots: Vec<Snapshot>,
@@ -123,6 +142,9 @@ pub struct Screen {
     pub disk: Option<(u64, u64)>,
     pub now: DateTime<Local>,
     pub hits: Vec<(Rect, Hit)>,
+    pub prompt: Option<Prompt>,
+    /// Whether snapshots can be taken and changed: it needs root.
+    pub can_change: bool,
 }
 
 impl Screen {
@@ -154,6 +176,8 @@ impl Screen {
             disk: None,
             now: Local::now(),
             hits: Vec::new(),
+            prompt: None,
+            can_change: false,
         };
         screen.set_snapshots(snapshots);
         // Open on the first tab - "all" when there is more than one - at the newest.
@@ -258,7 +282,67 @@ impl Screen {
             Mode::Browse => self.browse(key, page_height),
             Mode::Search => self.searching(key),
             Mode::Overlay => self.overlaid(key, page_height),
+            Mode::Prompt => self.prompting(key),
         }
+    }
+
+    /// Put the cursor on a snapshot - one just taken, say - if it is shown.
+    pub fn select(&mut self, id: u64) {
+        if let Some(n) = self.visible.iter().position(|&i| self.snapshots[i].id == id) {
+            self.cursor = n;
+        }
+    }
+
+    fn ask(&mut self, prompt: Prompt, input: String) {
+        if !self.can_change {
+            self.message = Some((Tone::Error, NEEDS_ROOT.into()));
+            return;
+        }
+        self.prompt = Some(prompt);
+        self.input = input;
+        self.mode = Mode::Prompt;
+    }
+
+    fn prompting(&mut self, key: Key) -> Action {
+        let Some(prompt) = self.prompt else {
+            self.mode = Mode::Browse;
+            return Action::None;
+        };
+        let done = |screen: &mut Screen| {
+            screen.prompt = None;
+            screen.mode = Mode::Browse;
+        };
+        if let Prompt::ConfirmDelete(id) = prompt {
+            // Only y deletes; any other key - Enter included - keeps it.
+            done(self);
+            return if matches!(key, Key::Char('y') | Key::Char('Y')) {
+                Action::Delete(id)
+            } else {
+                self.message = Some((Tone::Dim, "nothing deleted".into()));
+                Action::None
+            };
+        }
+        match key {
+            Key::Char(c) => self.input.push(c),
+            Key::Backspace => {
+                self.input.pop();
+            }
+            Key::Esc => done(self),
+            Key::Enter => {
+                done(self);
+                let text = self.input.trim().to_owned();
+                return match prompt {
+                    Prompt::NewSnapshot => {
+                        let tab = self.tabs[self.tab].clone();
+                        Action::Snapshot(text, (tab != ALL).then_some(tab))
+                    }
+                    Prompt::Describe(id) => Action::Describe(id, text),
+                    Prompt::ConfirmDelete(_) => unreachable!("handled above"),
+                };
+            }
+            _ => {}
+        }
+        Action::None
     }
 
     pub fn click(&mut self, column: u16, row: u16) -> Action {
@@ -332,6 +416,25 @@ impl Screen {
                 self.mode = Mode::Search;
             }
             Key::Char('c') => return self.compare(),
+            Key::Char('n') => self.ask(Prompt::NewSnapshot, String::new()),
+            Key::Char('d') => {
+                if let Some((id, text)) = self.current().map(|s| (s.id, s.description.clone())) {
+                    self.ask(Prompt::Describe(id), text);
+                }
+            }
+            Key::Char('p') => {
+                if let Some((id, keep)) = self.current().map(|s| (s.id, s.keep)) {
+                    if self.can_change {
+                        return Action::Keep(id, !keep);
+                    }
+                    self.message = Some((Tone::Error, NEEDS_ROOT.into()));
+                }
+            }
+            Key::Char('x') | Key::Delete => {
+                if let Some(id) = self.current().map(|s| s.id) {
+                    self.ask(Prompt::ConfirmDelete(id), String::new());
+                }
+            }
             Key::Char('r') => return Action::Reload,
             Key::Char('?') => {
                 self.overlay = Some(Overlay::Text(help_page()));
@@ -475,6 +578,12 @@ impl Screen {
     pub fn keys(&self) -> Vec<(&'static str, String)> {
         match (self.mode, &self.overlay) {
             (Mode::Search, _) => vec![("⏎", "keep".into()), ("esc", "cancel".into()), ("↑↓", "move".into())],
+            (Mode::Prompt, _) => match self.prompt {
+                Some(Prompt::ConfirmDelete(_)) => {
+                    vec![("y", "delete".into()), ("any other key", "keep it".into())]
+                }
+                _ => vec![("⏎", "ok".into()), ("esc", "cancel".into())],
+            },
             (Mode::Overlay, Some(Overlay::Diff(_))) => vec![
                 ("↑↓", "move".into()),
                 ("←→", "fold".into()),
@@ -497,6 +606,14 @@ impl Screen {
                         None => "compare".into(),
                     };
                     keys.push(("c", compare));
+                }
+                if self.can_change {
+                    keys.push(("n", "new".into()));
+                    if self.current().is_some() {
+                        keys.push(("d", "describe".into()));
+                        keys.push(("p", "keep".into()));
+                        keys.push(("x", "delete".into()));
+                    }
                 }
                 keys.push(("/", "search".into()));
                 if self.mark.is_some() {
@@ -536,7 +653,9 @@ fn detail_page(
         super::theme::ago(&s.created, now)
     );
     let boot = match &s.boot {
-        Some(b) => format!("stored: kernel {}…, initramfs {}…", &b.kernel[..12], &b.initramfs[..12]),
+        Some(b) => {
+            format!("{} {} stored ({}…, {}…)", b.pkgbase, b.version, &b.kernel[..8], &b.initramfs[..8])
+        }
         None => "not stored".into(),
     };
     let mut lines = vec![
@@ -569,6 +688,10 @@ fn help_page() -> Page {
         ("Enter", "a snapshot's full details (or click it twice)"),
         ("c", "mark a snapshot, then c on another: what changed"),
         ("/", "search: text, or a selector such as kind=pacman"),
+        ("n", "new snapshot (of this tab's subvolume, or all)"),
+        ("d", "describe: change the description"),
+        ("p", "keep (pin) or unkeep: kept ones are never pruned"),
+        ("x  Del", "delete, after y to confirm"),
         ("Esc", "unmark, or clear the search"),
         ("r", "reload (it also reloads when snapshots come and go)"),
         ("q", "quit"),
@@ -816,6 +939,45 @@ mod tests {
         let without_4: Vec<Snapshot> = s.snapshots.iter().filter(|x| x.id != 4).cloned().collect();
         s.set_snapshots(without_4);
         assert_eq!(s.mark, None);
+    }
+
+    #[test]
+    fn changes_need_root() {
+        let mut s = screen(&["root"]);
+        for key in ['n', 'd', 'x'] {
+            assert_eq!(press(&mut s, &[Key::Char(key)]), Action::None);
+            assert_eq!(s.mode, Mode::Browse);
+            assert!(s.message.as_ref().unwrap().1.contains("needs root"));
+        }
+        assert_eq!(press(&mut s, &[Key::Char('p')]), Action::None);
+        assert!(s.message.as_ref().unwrap().1.contains("needs root"));
+    }
+
+    #[test]
+    fn a_new_snapshot_of_this_tab() {
+        let mut s = screen(&["root", "home"]);
+        s.can_change = true;
+        press(&mut s, &[Key::Char('n')]);
+        typing(&mut s, "before kde ");
+        assert_eq!(press(&mut s, &[Key::Enter]), Action::Snapshot("before kde".into(), None));
+        press(&mut s, &[Key::Tab, Key::Tab, Key::Char('n')]);
+        assert_eq!(press(&mut s, &[Key::Enter]), Action::Snapshot(String::new(), Some("home".into())));
+        press(&mut s, &[Key::Char('n'), Key::Char('q'), Key::Esc]);
+        assert_eq!(s.mode, Mode::Browse, "q is typed, esc cancels");
+    }
+
+    #[test]
+    fn describe_keep_delete() {
+        let mut s = screen(&["root"]);
+        s.can_change = true;
+        press(&mut s, &[Key::Char('d')]);
+        assert_eq!(s.input, "upgrade mesa", "starts from the old description");
+        press(&mut s, &[Key::Backspace, Key::Backspace, Key::Backspace, Key::Backspace]);
+        assert_eq!(press(&mut s, &[Key::Enter]), Action::Describe(5, "upgrade".into()));
+        assert_eq!(press(&mut s, &[Key::Char('p')]), Action::Keep(5, true));
+        assert_eq!(press(&mut s, &[Key::Char('x'), Key::Enter]), Action::None, "Enter is not yes");
+        assert_eq!(press(&mut s, &[Key::Char('x'), Key::Char('y')]), Action::Delete(5));
+        assert_eq!(press(&mut s, &[Key::Up, Key::Delete, Key::Char('y')]), Action::Delete(4));
     }
 
     #[test]

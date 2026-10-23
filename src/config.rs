@@ -48,6 +48,8 @@ pub struct Config {
     pub max_snapshots: usize,
     /// How many snapshots get a boot menu entry; 0 writes none.
     pub boot_entries: usize,
+    /// Whether root snapshots keep a copy of their kernel and initramfs.
+    pub store_kernels: bool,
     pub pacman_pre_snapshot: bool,
     pub pacman_post_snapshot: bool,
     pub color: ColorChoice,
@@ -125,10 +127,17 @@ impl Default for Retention {
     }
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields, default)]
 struct Boot {
     entries: i64,
+    store_kernels: bool,
+}
+
+impl Default for Boot {
+    fn default() -> Self {
+        Self { entries: 0, store_kernels: true }
+    }
 }
 
 #[derive(Deserialize)]
@@ -225,6 +234,7 @@ pub fn parse(text: &str) -> Result<Config> {
         snapshots_dir: file.filesystem.snapshots_dir.into(),
         max_snapshots,
         boot_entries: count(file.boot.entries, "boot.entries", 0)?,
+        store_kernels: file.boot.store_kernels,
         pacman_pre_snapshot: file.pacman.pre_snapshot,
         pacman_post_snapshot: file.pacman.post_snapshot,
         color: file.output.color,

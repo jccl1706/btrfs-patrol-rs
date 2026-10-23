@@ -6,9 +6,14 @@ mod check;
 mod config;
 mod diff;
 mod error;
+mod hook;
+mod kernel;
+mod manage;
 mod mounts;
 mod selector;
+mod setup;
 mod snapshot;
+mod system;
 mod table;
 mod tui;
 
@@ -47,6 +52,52 @@ enum Command {
         #[arg(short, long)]
         verbose: bool,
     },
+    /// Take snapshots of the managed subvolumes
+    Snapshot {
+        #[arg(short, long, default_value = "")]
+        description: String,
+        /// Never prune these snapshots automatically
+        #[arg(short, long)]
+        keep: bool,
+        /// Only this subvolume, root or a [subvolumes.NAME] table; repeat for more
+        #[arg(short, long = "subvolume", value_name = "NAME")]
+        subvolumes: Vec<String>,
+        #[arg(long, default_value = "manual", hide = true, value_parser = ["manual", "timer"])]
+        kind: String,
+    },
+    /// Change a snapshot's description
+    Describe { id: u64, description: String },
+    /// Protect snapshots from pruning
+    #[command(after_help = selector::HELP)]
+    Keep { selector: String },
+    /// Let snapshots be pruned again
+    #[command(after_help = selector::HELP)]
+    Unkeep { selector: String },
+    /// Delete snapshots
+    #[command(after_help = selector::HELP)]
+    Delete {
+        selector: String,
+        /// Don't ask for confirmation
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Delete each subvolume's oldest snapshots beyond its max_snapshots
+    Prune,
+    /// Set the system up: the snapshots subvolume, its mount, the timer
+    Setup {
+        /// Show what would be done, change nothing
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+        /// Don't ask for confirmation
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Run by the pacman hooks around each transaction
+    #[command(hide = true)]
+    PacmanHook {
+        #[arg(value_parser = ["pre", "post"])]
+        when: String,
+    },
     /// Show what changed between two snapshots (needs root)
     Diff {
         #[arg(value_name = "OLD")]
@@ -74,12 +125,33 @@ impl App {
         !self.config.subvolumes.is_empty() || snapshots.iter().any(|s| s.subvolume != ROOT)
     }
 
-    fn info(&self, message: &str) {
+    /// The snapshots a selector matches; matching none is an error.
+    pub fn matching(&self, selector: &str) -> Result<Vec<Snapshot>> {
+        let all = self.store.load_all()?;
+        let found: Vec<Snapshot> = selector::select(selector, &all)?.into_iter().cloned().collect();
+        if found.is_empty() {
+            bail!("no snapshots match {selector:?}");
+        }
+        Ok(found)
+    }
+
+    pub fn print_table(&self, snapshots: &[Snapshot]) {
+        let rows: Vec<&Snapshot> = snapshots.iter().collect();
+        let width = if std::io::stdout().is_terminal() {
+            ratatui::crossterm::terminal::size().map_or(80, |(w, _)| w as usize)
+        } else {
+            usize::MAX / 2
+        };
+        let style = Style::for_stdout(self.color);
+        println!("{}", table::format_table(&rows, style, width, false, self.show_subvolume(snapshots)));
+    }
+
+    pub fn info(&self, message: &str) {
         println!("{} {message}", Style::for_stdout(self.color).blue("::"));
     }
 }
 
-fn warn(color: ColorChoice, message: &str) {
+pub fn warn(color: ColorChoice, message: &str) {
     eprintln!("{} {message}", Style::for_stderr(color).yellow("warning:"));
 }
 
@@ -158,6 +230,42 @@ fn cmd_check(app: &App) -> Result<u8> {
     Ok(0)
 }
 
+/// Set the system up, then check it. Unlike the other commands, it needs no
+/// configuration - writing one is part of what it may do.
+fn cmd_setup(
+    path: Option<&std::path::Path>,
+    color: Option<ColorChoice>,
+    dry_run: bool,
+    yes: bool,
+) -> Result<u8> {
+    require_root("setup")?;
+    system::require_confirmation_possible(yes || dry_run)?;
+    let plan = setup::prepare(path)?;
+    let color = color.unwrap_or(plan.config.color);
+    let app = App { store: Store::new(&plan.config.snapshots_dir), config: plan.config.clone(), color };
+    let actions = plan.actions();
+    if actions.is_empty() {
+        app.info("already set up; nothing to do");
+    } else {
+        println!("setup will:");
+        for action in &actions {
+            println!("  - {action}");
+        }
+        if dry_run {
+            app.info("dry run: nothing changed");
+            return Ok(0);
+        }
+        if !system::confirm("Continue?", yes)? {
+            app.info("nothing changed");
+            return Ok(1);
+        }
+        plan.execute()?;
+        app.info("setup done");
+    }
+    drop(plan);
+    cmd_check(&app)
+}
+
 pub fn is_root() -> bool {
     // SAFETY: geteuid has no preconditions and cannot fail.
     unsafe { libc::geteuid() == 0 }
@@ -175,15 +283,41 @@ fn run(cli: Cli) -> Result<u8> {
         print!("{}", config::EXAMPLE);
         return Ok(0);
     }
+    if let Command::Setup { dry_run, yes } = cli.command {
+        return cmd_setup(cli.config.as_deref(), cli.color, dry_run, yes);
+    }
     let config = config::load(cli.config.as_deref())?;
     let color = cli.color.unwrap_or(config.color);
     let app = App { store: Store::new(&config.snapshots_dir), config, color };
+    let changes = matches!(
+        cli.command,
+        Command::Snapshot { .. }
+            | Command::Describe { .. }
+            | Command::Keep { .. }
+            | Command::Unkeep { .. }
+            | Command::Delete { .. }
+            | Command::Prune
+            | Command::PacmanHook { .. }
+    );
+    if changes {
+        require_root("changing snapshots")?;
+        system::defer_interrupts();
+    }
     match cli.command {
+        Command::Snapshot { description, keep, subvolumes, kind } => {
+            manage::cmd_snapshot(&app, &description, keep, &subvolumes, &kind)
+        }
+        Command::Describe { id, description } => manage::cmd_describe(&app, id, &description),
+        Command::Keep { selector } => manage::cmd_keep(&app, &selector, true),
+        Command::Unkeep { selector } => manage::cmd_keep(&app, &selector, false),
+        Command::Delete { selector, yes } => manage::cmd_delete(&app, &selector, yes),
+        Command::Prune => manage::cmd_prune(&app),
+        Command::PacmanHook { when } => Ok(hook::run(&app, &when)),
         Command::List { selector, verbose } => cmd_list(&app, selector.as_deref(), verbose),
         Command::Diff { old, new } => cmd_diff(&app, old, new),
         Command::Check => cmd_check(&app),
         Command::Tui => tui::run(&app),
-        Command::ExampleConfig => unreachable!("handled above"),
+        Command::ExampleConfig | Command::Setup { .. } => unreachable!("handled above"),
     }
 }
 

@@ -1,0 +1,51 @@
+# Maintainer: jc <jccl1706@gmail.com>
+pkgname=btrfs-patrol-git
+_pkgname=btrfs-patrol
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Btrfs snapshot manager and rollback tool for Arch Linux, with a ratatui TUI"
+arch=('x86_64')
+url="https://github.com/jccl1706/btrfs-patrol-rs"
+license=('GPL-3.0-or-later')
+depends=('btrfs-progs' 'util-linux' 'gcc-libs' 'glibc')
+makedepends=('cargo' 'git')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+backup=()
+install=btrfs-patrol.install
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+options=(!lto)
+
+pkgver() {
+  cd "$_pkgname"
+  printf "%s.r%s.g%s" "$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" \
+    "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 target/release/btrfs-patrol -t "$pkgdir/usr/bin/"
+  install -Dm644 data/alpm/*.hook -t "$pkgdir/usr/share/libalpm/hooks/"
+  install -Dm644 data/systemd/btrfs-patrol-snapshot.{service,timer} -t "$pkgdir/usr/lib/systemd/system/"
+  install -Dm644 config.toml.example README.md -t "$pkgdir/usr/share/doc/$_pkgname/"
+  install -Dm644 NOTICE -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

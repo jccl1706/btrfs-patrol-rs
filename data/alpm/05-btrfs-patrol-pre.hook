@@ -1,0 +1,16 @@
+# A btrfs-patrol snapshot before every pacman transaction. 05- so it runs
+# before other hooks change anything. No AbortOnFail: a snapshot problem
+# never stops a transaction.
+[Trigger]
+Operation = Upgrade
+Operation = Install
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Taking a btrfs-patrol snapshot...
+Depends = btrfs-progs
+When = PreTransaction
+Exec = /usr/bin/btrfs-patrol pacman-hook pre
+NeedsTargets

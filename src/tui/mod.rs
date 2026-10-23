@@ -22,7 +22,7 @@ use self::screen::{Action, Key, Screen, Tone};
 use self::size::{Size, Sizer};
 use self::theme::Look;
 use crate::error::Result;
-use crate::{App, bail, err, is_root, table};
+use crate::{App, bail, err, is_root, manage, table};
 
 /// How often the store and the disk are looked at while nothing happens.
 const WATCH: Duration = Duration::from_secs(1);
@@ -40,6 +40,7 @@ pub fn run(app: &App) -> Result<u8> {
     let mut screen = Screen::new(snapshots, managed, false, &app.store);
     screen.show_subvolume = app.show_subvolume(&screen.snapshots);
     screen.can_measure = is_root();
+    screen.can_change = is_root();
     screen.disk = size::disk_usage(&app.store.directory);
     let look = Look::detect(table::color_enabled(app.color, true));
 
@@ -86,6 +87,7 @@ fn input(code: KeyCode, modifiers: KeyModifiers) -> Input {
         KeyCode::Enter => Key::Enter,
         KeyCode::Esc => Key::Esc,
         KeyCode::Backspace => Key::Backspace,
+        KeyCode::Delete => Key::Delete,
         KeyCode::Char(c) => Key::Char(c),
         _ => return Input::Ignored,
     })
@@ -99,6 +101,27 @@ fn reload(app: &App, screen: &mut Screen) {
         }
         Err(e) => screen.message = Some((Tone::Error, e.0)),
     }
+}
+
+/// Say what is happening and draw it, before something slow.
+fn busy(terminal: &mut DefaultTerminal, screen: &mut Screen, look: Look, text: &str) -> Result<()> {
+    screen.message = Some((Tone::Accent, text.to_owned()));
+    terminal
+        .draw(|frame| {
+            view::draw(frame, screen, look);
+        })
+        .map_err(|e| err!("terminal: {e}"))?;
+    Ok(())
+}
+
+/// Reload after a change, and say how it went.
+fn finish(app: &App, screen: &mut Screen, seen: &mut Option<std::time::SystemTime>, result: Result<String>) {
+    reload(app, screen);
+    *seen = app.store.modified();
+    screen.message = Some(match result {
+        Ok(text) => (Tone::Ok, text),
+        Err(e) => (Tone::Error, e.0),
+    });
 }
 
 fn event_loop(terminal: &mut DefaultTerminal, app: &App, screen: &mut Screen, look: Look) -> Result<u8> {
@@ -159,6 +182,47 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &App, screen: &mut Screen, lo
                 if screen.message.is_none() {
                     screen.message = Some((Tone::Ok, "reloaded".into()));
                 }
+            }
+            Action::Snapshot(description, subvolume) => {
+                busy(terminal, screen, look, "taking a snapshot…")?;
+                let names: Vec<String> = subvolume.into_iter().collect();
+                let result =
+                    manage::selected_subvolumes(&app.config, &names, "manual").and_then(|subvolumes| {
+                        manage::take_snapshots(app, &subvolumes, "manual", &description, false)
+                    });
+                reload(app, screen);
+                seen = app.store.modified();
+                match result {
+                    Ok(taken) => {
+                        let ids: Vec<String> = taken.created.iter().map(|s| format!("#{}", s.id)).collect();
+                        if let Some(last) = taken.created.last() {
+                            screen.select(last.id);
+                        }
+                        let mut text = format!("created {}", ids.join(", "));
+                        if !taken.pruned.is_empty() {
+                            text.push_str(&format!(", pruned {}", taken.pruned.len()));
+                        }
+                        screen.message = Some(match taken.warnings.first() {
+                            Some(w) => (Tone::Error, format!("{text}; {w}")),
+                            None => (Tone::Ok, text),
+                        });
+                    }
+                    Err(e) => screen.message = Some((Tone::Error, e.0)),
+                }
+            }
+            Action::Describe(id, text) => {
+                let result = manage::describe(app, id, &text);
+                finish(app, screen, &mut seen, result.map(|()| format!("#{id} described")));
+            }
+            Action::Keep(id, keep) => {
+                let result = manage::set_keep(app, &[id], keep);
+                let done = if keep { "kept: never pruned" } else { "can be pruned again" };
+                finish(app, screen, &mut seen, result.map(|_| format!("#{id} {done}")));
+            }
+            Action::Delete(id) => {
+                busy(terminal, screen, look, &format!("deleting #{id}…"))?;
+                let result = manage::delete(app, &[id]);
+                finish(app, screen, &mut seen, result.map(|_| format!("#{id} deleted")));
             }
             Action::Compare(older, newer) => {
                 screen.message = Some((Tone::Accent, format!("comparing #{older} → #{newer}…")));

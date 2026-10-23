@@ -1,0 +1,10 @@
+[Unit]
+Description=Take a scheduled btrfs-patrol snapshot
+Documentation=https://github.com/jccl1706/btrfs-patrol-rs
+RequiresMountsFor=/.snapshots
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/btrfs-patrol snapshot --kind timer
+Nice=19
+IOSchedulingClass=idle

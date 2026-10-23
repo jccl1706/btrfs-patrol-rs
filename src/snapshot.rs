@@ -18,17 +18,18 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, TimeZone};
+use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, TimeZone, Timelike};
 use serde_json::{Map, Value, json};
 
 use crate::error::Result;
-use crate::{bail, err};
+use crate::{bail, btrfs, err, system};
 
 /// The name the root subvolume goes by in metadata, listings and selectors.
 pub const ROOT: &str = "root";
 pub const INFO_FILE: &str = "info.json";
 pub const SUBVOLUME_NAME: &str = "snapshot";
 pub const BOOT_DIR: &str = ".boot";
+pub const COUNTER_FILE: &str = ".next-id";
 /// Metadata of a root snapshot, which names no subvolume.
 pub const FORMAT_VERSION: u64 = 1;
 /// Metadata of any other subvolume's snapshot, which names the subvolume.
@@ -40,6 +41,11 @@ pub const FORMAT_WITH_SUBVOLUME: u64 = 2;
 /// store's `.boot` directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootFiles {
+    /// The kernel package they belong to, which names them on the ESP:
+    /// vmlinuz-<pkgbase>, initramfs-<pkgbase>.img.
+    pub pkgbase: String,
+    /// The release in the kernel image, which the snapshot has modules for.
+    pub version: String,
     pub kernel: String,
     pub initramfs: String,
 }
@@ -75,7 +81,11 @@ impl Snapshot {
             data.insert("subvolume".into(), json!(self.subvolume));
         }
         if let Some(boot) = &self.boot {
-            data.insert("boot".into(), json!({"kernel": boot.kernel, "initramfs": boot.initramfs}));
+            data.insert(
+                "boot".into(),
+                json!({"pkgbase": boot.pkgbase, "version": boot.version,
+                       "kernel": boot.kernel, "initramfs": boot.initramfs}),
+            );
         }
         Value::Object(data)
     }
@@ -107,7 +117,19 @@ impl Snapshot {
                         .map(str::to_owned)
                         .ok_or_else(|| invalid(&format!("boot.{key}")))
                 };
-                Some(BootFiles { kernel: hash("kernel")?, initramfs: hash("initramfs")? })
+                let name = |key: &str| {
+                    boot.get(key)
+                        .and_then(Value::as_str)
+                        .filter(|v| !v.is_empty() && !v.contains('/') && !v.starts_with('.'))
+                        .map(str::to_owned)
+                        .ok_or_else(|| invalid(&format!("boot.{key}")))
+                };
+                Some(BootFiles {
+                    pkgbase: name("pkgbase")?,
+                    version: name("version")?,
+                    kernel: hash("kernel")?,
+                    initramfs: hash("initramfs")?,
+                })
             }
         };
         Ok(Snapshot {
@@ -141,7 +163,6 @@ fn parse_created(text: &str) -> Option<DateTime<FixedOffset>> {
 
 /// The oldest snapshots of `subvolume` that aren't kept, beyond the newest
 /// `max_snapshots` of them.
-#[cfg_attr(not(test), allow(dead_code))] // prune arrives in phase 2
 pub fn select_for_pruning<'a>(
     snapshots: &'a [Snapshot],
     max_snapshots: usize,
@@ -181,6 +202,9 @@ impl Store {
             std::io::ErrorKind::NotFound => {
                 err!("snapshots directory not found: {}", self.directory.display())
             }
+            std::io::ErrorKind::PermissionDenied => {
+                err!("{} is readable only by root; run it with sudo", self.directory.display())
+            }
             _ => err!("{}: {e}", self.directory.display()),
         })?;
         let mut ids: Vec<u64> = entries
@@ -213,6 +237,109 @@ impl Store {
     /// `check` walks the ids itself and reports those, so they aren't hidden.
     pub fn load_all(&self) -> Result<Vec<Snapshot>> {
         Ok(self.ids()?.into_iter().filter_map(|id| self.load(id).ok()).collect())
+    }
+
+    pub fn save(&self, snapshot: &Snapshot) -> Result<()> {
+        let text = serde_json::to_string_pretty(&snapshot.to_json()).expect("plain JSON") + "\n";
+        system::write_atomic(&self.path(snapshot.id).join(INFO_FILE), text.as_bytes(), None)
+    }
+
+    /// Take the next snapshot ID and advance the counter past it. The
+    /// counter only moves forward, so an ID is never reused, even after the
+    /// newest snapshot is deleted - and it never falls behind what is on
+    /// disk, as in a store btrfs-patrol made before it had a counter.
+    fn reserve_id(&self) -> Result<u64> {
+        let counter = self.directory.join(COUNTER_FILE);
+        let stored = match std::fs::read_to_string(&counter) {
+            Ok(text) => text
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| err!("{}: expected a snapshot ID", counter.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 1,
+            Err(e) => bail!("{}: {e}", counter.display()),
+        };
+        let id = stored.max(self.ids()?.last().map_or(1, |last| last + 1));
+        // Advanced before anything is created, so a failure can't hand it out twice.
+        system::write_atomic(&counter, format!("{}\n", id + 1).as_bytes(), None)?;
+        Ok(id)
+    }
+
+    /// Reserve an ID and write the metadata for a snapshot whose subvolume
+    /// the caller then puts in place. Hold the lock.
+    pub fn new_entry(&self, kind: &str, description: &str, keep: bool, subvolume: &str) -> Result<Snapshot> {
+        let now = chrono::Local::now().fixed_offset();
+        let snapshot = Snapshot {
+            id: self.reserve_id()?,
+            // Metadata keeps whole seconds; so does this, so the two are equal.
+            created: now.with_nanosecond(0).unwrap_or(now),
+            kernel: system::kernel_release(),
+            kind: kind.into(),
+            description: description.into(),
+            keep,
+            subvolume: subvolume.into(),
+            boot: None,
+        };
+        let path = self.path(snapshot.id);
+        std::fs::create_dir(&path).map_err(|e| err!("{}: {e}", path.display()))?;
+        if let Err(e) = self.save(&snapshot) {
+            let _ = self.remove_entry(snapshot.id);
+            return Err(e);
+        }
+        Ok(snapshot)
+    }
+
+    /// Remove a snapshot's metadata and its directory, which must hold nothing else.
+    pub fn remove_entry(&self, id: u64) -> Result<()> {
+        let path = self.path(id);
+        for name in [INFO_FILE.to_owned(), format!("{INFO_FILE}.tmp")] {
+            let _ = std::fs::remove_file(path.join(name));
+        }
+        std::fs::remove_dir(&path).map_err(|e| err!("{}: {e}", path.display()))
+    }
+
+    /// Take a read-only snapshot of `source`, the managed subvolume named
+    /// `subvolume`. Metadata first, so a subvolume never exists without it;
+    /// any failure - Ctrl+C included, which reaches btrfs and fails it -
+    /// removes the entry again. Hold the lock.
+    pub fn create(
+        &self,
+        source: &Path,
+        kind: &str,
+        description: &str,
+        keep: bool,
+        subvolume: &str,
+    ) -> Result<Snapshot> {
+        let snapshot = self.new_entry(kind, description, keep, subvolume)?;
+        let made = btrfs::create_snapshot(source, &self.subvolume(snapshot.id), true);
+        if let Err(e) = made.and_then(|()| if system::interrupted() { bail!("interrupted") } else { Ok(()) })
+        {
+            if self.subvolume(snapshot.id).exists() {
+                let _ = btrfs::delete_subvolume(&self.subvolume(snapshot.id));
+            }
+            let _ = self.remove_entry(snapshot.id);
+            return Err(e);
+        }
+        Ok(snapshot)
+    }
+
+    /// Delete a snapshot's subvolume, then its metadata. Hold the lock.
+    pub fn delete(&self, id: u64) -> Result<()> {
+        let subvolume = self.subvolume(id);
+        if subvolume.exists() {
+            btrfs::delete_subvolume(&subvolume)?;
+        }
+        self.remove_entry(id)
+    }
+
+    /// Delete `subvolume`'s snapshots beyond `max_snapshots`, and return them. Hold the lock.
+    pub fn prune(&self, max_snapshots: usize, subvolume: &str) -> Result<Vec<Snapshot>> {
+        let all = self.load_all()?;
+        let pruned: Vec<Snapshot> =
+            select_for_pruning(&all, max_snapshots, subvolume).into_iter().cloned().collect();
+        for snapshot in &pruned {
+            self.delete(snapshot.id)?;
+        }
+        Ok(pruned)
     }
 
     /// When the store last changed: snapshots coming and going touch the
@@ -267,7 +394,12 @@ pub mod tests {
             r#"{"format":1,"created":"2026-09-21T22:25:56+02:00","kernel":"7.2.11-arch1-1","kind":"manual","description":"","keep":false}"#
         );
         s.subvolume = "home".into();
-        s.boot = Some(BootFiles { kernel: "a".repeat(64), initramfs: "b".repeat(64) });
+        s.boot = Some(BootFiles {
+            pkgbase: "linux".into(),
+            version: "7.2.11-arch1-1".into(),
+            kernel: "a".repeat(64),
+            initramfs: "b".repeat(64),
+        });
         let data = s.to_json();
         assert_eq!(data["format"], 2);
         assert_eq!(Snapshot::from_json(7, &data).unwrap(), s);
@@ -280,7 +412,14 @@ pub mod tests {
             ("format", json!(3)),
             ("created", json!("yesterday")),
             ("kernel", json!(5)),
-            ("boot", json!({"kernel": "../../etc/shadow", "initramfs": "b".repeat(64)})),
+            (
+                "boot",
+                json!({"pkgbase": "linux", "version": "v", "kernel": "../../etc/shadow", "initramfs": "b".repeat(64)}),
+            ),
+            (
+                "boot",
+                json!({"pkgbase": "../x", "version": "v", "kernel": "a".repeat(64), "initramfs": "b".repeat(64)}),
+            ),
         ] {
             let mut data = good.clone();
             data[key] = value;
@@ -328,6 +467,25 @@ pub mod tests {
         let ids: Vec<u64> = store.load_all().unwrap().iter().map(|s| s.id).collect();
         assert_eq!(ids, [2, 10]);
         assert!(store.load(3).unwrap_err().0.contains("has no info.json"));
+    }
+
+    #[test]
+    fn ids_are_never_reused() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        let a = store.new_entry("manual", "", false, ROOT).unwrap();
+        let b = store.new_entry("timer", "", false, "home").unwrap();
+        assert_eq!((a.id, b.id), (1, 2));
+        store.remove_entry(b.id).unwrap();
+        assert_eq!(store.new_entry("manual", "", false, ROOT).unwrap().id, 3, "2 is gone, not free");
+        // A store from before the counter: it starts past what is there.
+        std::fs::remove_file(dir.path().join(COUNTER_FILE)).unwrap();
+        std::fs::create_dir(store.path(40)).unwrap();
+        assert_eq!(store.new_entry("manual", "", false, ROOT).unwrap().id, 41);
+        let loaded = store.load(1).unwrap();
+        assert_eq!(loaded, a);
+        std::fs::write(dir.path().join(COUNTER_FILE), "x").unwrap();
+        assert!(store.new_entry("manual", "", false, ROOT).is_err());
     }
 
     #[test]

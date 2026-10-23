@@ -24,7 +24,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use super::difftree::DiffTree;
-use super::screen::{ALL, Hit, Mode, Overlay, Page, Screen, Tone, size_text};
+use super::screen::{ALL, Hit, Mode, Overlay, Page, Prompt, Screen, Tone, size_text};
 use super::size::Size;
 use super::theme::{self, Look};
 use crate::diff::Change;
@@ -483,7 +483,40 @@ fn tree_line(tree: &DiffTree, i: usize, selected: bool, width: usize, look: Look
 
 fn draw_footer(frame: &mut Frame, area: Rect, screen: &Screen, look: Look) {
     let p = look.palette;
-    let line = if screen.mode == Mode::Search {
+    let line = if let (Mode::Prompt, Some(prompt)) = (screen.mode, screen.prompt) {
+        match prompt {
+            Prompt::ConfirmDelete(id) => {
+                let what =
+                    screen.snapshots.iter().find(|s| s.id == id).map(shown_description).unwrap_or_default();
+                Line::from(vec![
+                    Span::styled(format!(" delete #{id} "), look.pill(p.red)),
+                    Span::styled(format!("  {}  ", truncate(&what, 40)), look.text()),
+                    Span::styled("y", look.bold(p.red)),
+                    Span::styled(" delete   any other key keeps it", look.muted()),
+                ])
+            }
+            Prompt::NewSnapshot | Prompt::Describe(_) => {
+                let label = match prompt {
+                    Prompt::NewSnapshot => {
+                        let tab = &screen.tabs[screen.tab];
+                        if tab == ALL {
+                            " new snapshot ".to_owned()
+                        } else {
+                            format!(" new snapshot of {tab} ")
+                        }
+                    }
+                    _ => " describe ".to_owned(),
+                };
+                Line::from(vec![
+                    Span::styled(label, look.pill(p.green)),
+                    Span::styled("  ", look.text()),
+                    Span::styled(screen.input.clone(), look.bold(p.fg)),
+                    Span::styled(" ", Style::new().add_modifier(Modifier::REVERSED)),
+                    Span::styled("   ⏎ ok   esc cancel", look.muted()),
+                ])
+            }
+        }
+    } else if screen.mode == Mode::Search {
         let mut spans = vec![
             Span::styled(format!(" {} search ", look.icons.search), look.pill(p.blue)),
             Span::raw(" "),

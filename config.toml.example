@@ -1,0 +1,57 @@
+# btrfs-patrol configuration.
+#
+# Copy this file to /etc/btrfs-patrol/config.toml, adjust it, then run
+# 'sudo btrfs-patrol check'. Without the file, these defaults apply. They
+# match the common Arch layout: @ mounted at /, @snapshots at /.snapshots.
+
+[filesystem]
+# Block device holding the btrfs filesystem, or "auto" to use the device
+# mounted at /. Examples: "/dev/nvme0n1p2", "/dev/mapper/cryptroot".
+device = "auto"
+
+# Subvolume mounted at /, as a path relative to the top-level subvolume.
+root_subvolume = "@"
+
+# Top-level subvolume that holds the snapshots. It must NOT be inside the root
+# subvolume, or a rollback would move the snapshots away together with root.
+snapshots_subvolume = "@snapshots"
+
+# Where snapshots_subvolume is mounted.
+snapshots_dir = "/.snapshots"
+
+[retention]
+# How many snapshots of root to keep before the oldest are pruned, and the
+# default for other subvolumes. Snapshots marked with 'btrfs-patrol keep' don't
+# count toward this limit.
+max_snapshots = 50
+
+# Other subvolumes to snapshot besides root: one [subvolumes.<name>] table each.
+# The name is what 'btrfs-patrol list' shows and 'subvolume=<name>' selects;
+# "root" is taken. Each must be a btrfs subvolume on the same filesystem as /,
+# mounted on its own (by subvol= in /etc/fstab, as Arch mounts /home) or inside
+# another subvolume. A subvolume is rolled back on its own: rolling back root
+# leaves /home alone, and the other way round.
+#
+# [subvolumes.home]
+# path = "/home"          # its mount point, or its path inside another subvolume
+# max_snapshots = 20      # snapshots of it to keep (default: retention.max_snapshots)
+# timer = true            # in the daily snapshot (default: true)
+# pacman = false          # in the snapshots pacman takes, too (default: false)
+
+[boot]
+# How many of the newest snapshots get a systemd-boot entry, so a system too
+# broken to log in to can be booted from a snapshot and rolled back from
+# there. 0 writes none, which is the default. Entries boot the snapshot
+# read-only, with the kernel stored alongside it.
+entries = 0
+
+[pacman]
+# Take a snapshot before each pacman transaction.
+pre_snapshot = true
+# Also take one after each transaction.
+post_snapshot = false
+
+[output]
+# "auto" (color only on a terminal, and not when NO_COLOR is set), "always"
+# or "never".
+color = "auto"

@@ -29,6 +29,15 @@ root and enabling the daily timer. It can also create and mount
 `@snapshots`, and it removes `subvolid=` from fstab, which would silently
 undo a rollback. `--dry-run` shows the plan and changes nothing.
 
+No configuration is needed on this layout. To change something - boot
+entries for snapshots, retention, other subvolumes - start from the
+commented example:
+
+```sh
+sudo btrfs-patrol example-config | sudo tee /etc/btrfs-patrol/config.toml
+sudo btrfs-patrol check
+```
+
 From then on a snapshot is taken **before every pacman transaction** -
 described as `pacman -Syu: linux, mesa, firefox +31 more` - and **once a
 day**, and the oldest are pruned beyond `max_snapshots` (kept ones never).

@@ -15,7 +15,7 @@ backup=()
 install=btrfs-patrol.install
 source=("$_pkgname::git+$url.git")
 sha256sums=('SKIP')
-options=(!lto)
+options=(!lto !debug)
 
 pkgver() {
   cd "$_pkgname"

@@ -1,0 +1,14 @@
+# /run starts empty at every boot: write the status file desktop widgets
+# read (/run/btrfs-patrol/status.json) once at startup. btrfs-patrol keeps
+# it current after that, whenever the store changes.
+[Unit]
+Description=Publish btrfs-patrol's snapshot summary for desktop widgets
+Documentation=https://github.com/jccl1706/btrfs-patrol-rs
+RequiresMountsFor=/.snapshots
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/btrfs-patrol publish-status
+
+[Install]
+WantedBy=multi-user.target

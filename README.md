@@ -126,6 +126,16 @@ beside it (under it on narrow terminals), and the disk's use in the header.
 Nerd Font icons need a Nerd Font in the terminal; the Linux console gets
 letters, and a non-UTF-8 locale gets plain ASCII.
 
+### For desktop widgets
+
+The store is root-only, so btrfs-patrol publishes a summary anyone may read
+at `/run/btrfs-patrol/status.json` - the newest snapshot (ID, time, kind,
+description), the counts, and `pending_rollback` while a rollback waits for
+a reboot. It is rewritten after every change and once at boot
+(`btrfs-patrol-status.service`, enabled by `setup`); nothing in it reaches
+into a snapshot. [archydots](https://github.com/jccl1706/archydots)' quickshell
+panel shows it as a pill, and a toast when pacman takes a snapshot.
+
 ### Compatible with btrfs-patrol
 
 The store is the same - `/.snapshots/<id>/info.json` and

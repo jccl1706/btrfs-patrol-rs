@@ -9,4 +9,5 @@ MSG
 
 post_upgrade() {
   systemctl daemon-reload >/dev/null 2>&1 || true
+  echo "==> btrfs-patrol: run 'sudo btrfs-patrol setup' - it only does what is new or missing."
 }

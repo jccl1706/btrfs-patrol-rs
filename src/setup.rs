@@ -28,6 +28,8 @@ use crate::{bail, err, system};
 pub const FSTAB: &str = "/etc/fstab";
 pub const FSTAB_BACKUP_SUFFIX: &str = ".btrfs-patrol-backup";
 pub const TIMER: &str = "btrfs-patrol-snapshot.timer";
+/// Writes the status file for desktop widgets at boot (/run starts empty).
+pub const STATUS: &str = "btrfs-patrol-status.service";
 
 /// The fields of the fstab line that mounts `mount_point`.
 pub fn fstab_entry<'a>(fstab: &'a str, mount_point: &Path) -> Option<Vec<&'a str>> {
@@ -141,6 +143,7 @@ pub struct Plan {
     mount: bool,
     fstab_without_subvolids: Option<(String, Vec<String>)>,
     enable_timer: bool,
+    enable_status: bool,
 }
 
 /// Work out what setup has to do. Holds the top-level subvolume mounted
@@ -241,6 +244,7 @@ pub fn prepare(config_path: Option<&Path>) -> Result<Plan> {
         mount: mounted.is_none(),
         fstab_without_subvolids: without_subvolids(&fstab),
         enable_timer: unit_state(TIMER).as_deref() == Some("disabled"),
+        enable_status: unit_state(STATUS).as_deref() == Some("disabled"),
         fstab_line,
         config,
         config_path: path,
@@ -290,6 +294,9 @@ impl Plan {
         if self.enable_timer {
             actions.push(format!("enable and start the daily snapshot timer ({TIMER})"));
         }
+        if self.enable_status {
+            actions.push(format!("enable the status file for desktop widgets at boot ({STATUS})"));
+        }
         actions
     }
 
@@ -338,6 +345,9 @@ impl Plan {
         // Last, so the first scheduled run finds the store mounted.
         if self.enable_timer {
             run("systemctl", &["enable", "--now", TIMER])?;
+        }
+        if self.enable_status {
+            run("systemctl", &["enable", "--now", STATUS])?;
         }
         Ok(())
     }

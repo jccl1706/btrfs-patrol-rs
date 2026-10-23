@@ -682,6 +682,7 @@ impl Plan {
                 }
                 // SAFETY: sync has no preconditions.
                 unsafe { libc::sync() };
+                crate::status::publish(app);
                 Ok(saved)
             }
             Err(e) => {

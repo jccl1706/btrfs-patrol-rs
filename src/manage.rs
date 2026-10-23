@@ -13,7 +13,7 @@ use crate::error::Result;
 use crate::kernel::{self, ESP, MODULES};
 use crate::mounts::{self, Mount, find_mount};
 use crate::snapshot::{ROOT, Snapshot};
-use crate::{App, bail, btrfs, entries, err, system};
+use crate::{App, bail, btrfs, entries, err, status, system};
 
 /// What a run of snapshot-taking did, for whoever reports it.
 #[derive(Debug, Default)]
@@ -137,6 +137,7 @@ pub fn take_snapshots(
     let (infos, warnings) = sync_entries(app);
     taken.entries = infos;
     taken.warnings.extend(warnings);
+    status::publish(app);
     Ok(taken)
 }
 
@@ -211,7 +212,9 @@ pub fn describe(app: &App, id: u64, description: &str) -> Result<()> {
     let _lock = system::lock(&app.store.directory)?;
     let mut snapshot = app.store.load(id).map_err(|_| err!("no snapshot with ID {id}"))?;
     snapshot.description = description.into();
-    app.store.save(&snapshot)
+    app.store.save(&snapshot)?;
+    status::publish(app);
+    Ok(())
 }
 
 pub fn cmd_describe(app: &App, id: u64, description: &str) -> Result<u8> {
@@ -230,6 +233,7 @@ pub fn set_keep(app: &App, ids: &[u64], keep: bool) -> Result<Vec<u64>> {
             changed.push(id);
         }
     }
+    status::publish(app);
     Ok(changed)
 }
 
@@ -267,6 +271,7 @@ pub fn delete(app: &App, ids: &[u64]) -> Result<Vec<u64>> {
         }
     }
     kernel::collect_garbage(&app.store)?;
+    status::publish(app);
     Ok(deleted)
 }
 
@@ -293,6 +298,7 @@ pub fn prune_all(app: &App) -> Result<Vec<Snapshot>> {
         pruned.extend(app.store.prune(subvolume.max_snapshots, &subvolume.name)?);
     }
     kernel::collect_garbage(&app.store)?;
+    status::publish(app);
     Ok(pruned)
 }
 

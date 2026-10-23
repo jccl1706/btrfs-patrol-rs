@@ -45,7 +45,7 @@ package() {
   cd "$_pkgname"
   install -Dm755 target/release/btrfs-patrol -t "$pkgdir/usr/bin/"
   install -Dm644 data/alpm/*.hook -t "$pkgdir/usr/share/libalpm/hooks/"
-  install -Dm644 data/systemd/btrfs-patrol-snapshot.{service,timer} -t "$pkgdir/usr/lib/systemd/system/"
+  install -Dm644 data/systemd/btrfs-patrol-snapshot.{service,timer} data/systemd/btrfs-patrol-status.service -t "$pkgdir/usr/lib/systemd/system/"
   install -Dm644 config.toml.example README.md -t "$pkgdir/usr/share/doc/$_pkgname/"
   # The directory only: a config.toml owned by the package would make the
   # next upgrade fail wherever someone already wrote their own.

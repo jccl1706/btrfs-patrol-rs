@@ -15,6 +15,7 @@ mod rollback;
 mod selector;
 mod setup;
 mod snapshot;
+mod status;
 mod system;
 mod table;
 mod tui;
@@ -104,6 +105,9 @@ enum Command {
         #[arg(short, long)]
         yes: bool,
     },
+    /// Write the status file desktop widgets read (/run/btrfs-patrol/status.json)
+    #[command(hide = true)]
+    PublishStatus,
     /// Run by the pacman hooks around each transaction
     #[command(hide = true)]
     PacmanHook {
@@ -311,6 +315,7 @@ fn run(cli: Cli) -> Result<u8> {
             | Command::Prune
             | Command::PacmanHook { .. }
             | Command::Rollback { .. }
+            | Command::PublishStatus
     );
     if changes {
         require_root("changing snapshots")?;
@@ -326,6 +331,7 @@ fn run(cli: Cli) -> Result<u8> {
         Command::Delete { selector, yes } => manage::cmd_delete(&app, &selector, yes),
         Command::Prune => manage::cmd_prune(&app),
         Command::PacmanHook { when } => Ok(hook::run(&app, &when)),
+        Command::PublishStatus => status::cmd_publish(&app),
         Command::Rollback { id, yes, dry_run } => rollback::cmd_rollback(&app, id, yes, dry_run),
         Command::List { selector, verbose } => cmd_list(&app, selector.as_deref(), verbose),
         Command::Diff { old, new } => cmd_diff(&app, old, new),

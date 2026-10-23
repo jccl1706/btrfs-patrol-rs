@@ -8,11 +8,11 @@ for Fedora) for Arch: snapshots before every pacman transaction and once a
 day, a full-screen browser for them, and one checked command to put the
 system back.
 
-> **Status: phases 1 and 2 of 3.** It takes, lists, compares, keeps,
-> prunes and deletes snapshots - by hand, before every pacman transaction,
-> and once a day - and stores the kernel that goes with each. Rollback
-> (phase 3) is next, and is tested in a VM before anything else. Snapshots
-> are not backups.
+> **Status: all three phases done.** It takes snapshots - by hand, before
+> every pacman transaction, once a day - with the kernel that goes with
+> each, and rolls back to them, kernel included, from the running system or
+> from a snapshot booted in the boot menu. Tested on a VM with this layout,
+> across a kernel change in both directions. Snapshots are not backups.
 
 ## Install
 
@@ -49,6 +49,44 @@ btrfs-patrol check                         # does the layout match the configura
 ```
 
 The store is readable only by root, so everything but `check` needs sudo.
+
+## Rolling back
+
+```sh
+sudo btrfs-patrol rollback 24 --dry-run   # every check, the plan, nothing changed
+sudo btrfs-patrol rollback 24             # the plan, then asks
+sudo reboot
+```
+
+The current root is kept as a new snapshot (kind `rollback`, kept), and a
+writable copy of snapshot 24 takes its place as `@`; subvolumes nested in it
+(systemd's `var/lib/machines`) move across. If the snapshot was taken on
+another kernel, **its stored kernel and initramfs go back on the ESP** -
+and the kernel you leave is stored with the saved state, so `rollback` to
+that one undoes it all. `/home`, `/var/log` and `/var/cache` are their own
+subvolumes and are not touched. Every step is undone if a later one fails;
+nothing reboots by itself. In the TUI: `R`, read the plan, `y`.
+
+After rolling back across a kernel change, `sudo mkinitcpio -P` rebuilds the
+fallback initramfs for the restored kernel (rollback reminds you).
+
+### When the system won't start
+
+Set `[boot] entries = 3` in `/etc/btrfs-patrol/config.toml`, and the three
+newest root snapshots appear in the systemd-boot menu, below Arch's own
+entries, each with its own kernel (copied to `/boot/btrfs-patrol/`). Boot
+one - it runs read-only - and roll back from there:
+
+```sh
+sudo btrfs-patrol rollback 28    # the snapshot you booted, or any other
+sudo reboot                      # into the normal entry
+```
+
+A snapshot booted this way reports itself as *degraded*: services that
+write to `/` fail on a read-only root (pacman's gpg-agent sockets,
+tmpfiles, lastlog). That is expected; it is there to roll back from.
+`systemctl reboot --boot-loader-entry='~btrfs-patrol-28.conf'` boots one
+without catching the menu.
 
 No configuration is needed on the standard layout below; `btrfs-patrol
 example-config` prints the file with its defaults, to copy to
@@ -111,9 +149,8 @@ the matching pair back on the ESP when it rolls back - which also makes
 2. ✅ **Taking snapshots** - `snapshot`, `describe`, `keep`, `delete`,
    `prune`, kernels stored per snapshot, `setup`, the daily systemd timer,
    pacman (ALPM) hooks, the TUI's actions, a PKGBUILD.
-3. **Rollback** - with kernels stored per snapshot, and systemd-boot entries
-   to boot a snapshot. Tested in a VM with the same layout before anything
-   else.
+3. ✅ **Rollback** - with the stored kernel put back on the ESP, undoable,
+   from the running system or a snapshot's own boot entry; `R` in the TUI.
 
 ## License
 

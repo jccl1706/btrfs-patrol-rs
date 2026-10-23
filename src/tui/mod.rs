@@ -22,7 +22,7 @@ use self::screen::{Action, Key, Screen, Tone};
 use self::size::{Size, Sizer};
 use self::theme::Look;
 use crate::error::Result;
-use crate::{App, bail, err, is_root, manage, table};
+use crate::{App, bail, err, is_root, manage, rollback, table};
 
 /// How often the store and the disk are looked at while nothing happens.
 const WATCH: Duration = Duration::from_secs(1);
@@ -127,6 +127,9 @@ fn finish(app: &App, screen: &mut Screen, seen: &mut Option<std::time::SystemTim
 fn event_loop(terminal: &mut DefaultTerminal, app: &App, screen: &mut Screen, look: Look) -> Result<u8> {
     let io = |e: std::io::Error| err!("terminal: {e}");
     let sizer = Sizer::start();
+    // A prepared rollback, holding the top-level subvolume mounted while
+    // its plan is on screen.
+    let mut planned: Option<rollback::Plan> = None;
     let mut seen = app.store.modified();
     let mut watched = Instant::now();
     loop {
@@ -221,8 +224,44 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &App, screen: &mut Screen, lo
             }
             Action::Delete(id) => {
                 busy(terminal, screen, look, &format!("deleting #{id}…"))?;
-                let result = manage::delete(app, &[id]);
-                finish(app, screen, &mut seen, result.map(|_| format!("#{id} deleted")));
+                let result = manage::delete(app, &[id]).map(|_| {
+                    let (_, warnings) = manage::sync_entries(app);
+                    warnings.into_iter().fold(format!("#{id} deleted"), |m, w| format!("{m}; {w}"))
+                });
+                finish(app, screen, &mut seen, result);
+            }
+            Action::PlanRollback(id) => {
+                busy(terminal, screen, look, &format!("checking a rollback to #{id}…"))?;
+                let prepared = app.store.load(id).and_then(|target| rollback::prepare(app, &target));
+                match prepared {
+                    Ok(plan) => {
+                        let mut lines: Vec<(Tone, String)> =
+                            plan.describe().into_iter().map(|l| (Tone::Plain, l)).collect();
+                        lines.extend(plan.warnings.iter().map(|w| (Tone::Error, format!("warning: {w}"))));
+                        screen.message = None;
+                        screen.show_rollback(id, lines);
+                        planned = Some(plan);
+                    }
+                    Err(e) => screen.message = Some((Tone::Error, e.0)),
+                }
+            }
+            Action::CancelRollback => planned = None,
+            Action::Rollback => {
+                if let Some(plan) = planned.take() {
+                    let id = plan.target.id;
+                    busy(terminal, screen, look, &format!("rolling back to #{id}…"))?;
+                    let result = plan.execute(app);
+                    drop(plan);
+                    let result = result.map(|saved| {
+                        let (_, warnings) = manage::sync_entries(app);
+                        let text = format!(
+                            "rolled back to #{id}: reboot to start it. The previous state is #{} (R on it undoes this)",
+                            saved.id
+                        );
+                        warnings.into_iter().fold(text, |m, w| format!("{m}; {w}"))
+                    });
+                    finish(app, screen, &mut seen, result);
+                }
             }
             Action::Compare(older, newer) => {
                 screen.message = Some((Tone::Accent, format!("comparing #{older} → #{newer}…")));

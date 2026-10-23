@@ -50,6 +50,12 @@ pub enum Action {
     Describe(u64, String),
     Keep(u64, bool),
     Delete(u64),
+    /// Check a rollback to this snapshot and show its plan.
+    PlanRollback(u64),
+    /// The plan on screen was confirmed with y.
+    Rollback,
+    /// The plan on screen was dismissed.
+    CancelRollback,
 }
 
 /// What the line at the bottom is asking for.
@@ -143,6 +149,8 @@ pub struct Screen {
     pub now: DateTime<Local>,
     pub hits: Vec<(Rect, Hit)>,
     pub prompt: Option<Prompt>,
+    /// The snapshot whose rollback plan is on screen, waiting for y.
+    pub rollback: Option<u64>,
     /// Whether snapshots can be taken and changed: it needs root.
     pub can_change: bool,
 }
@@ -177,6 +185,7 @@ impl Screen {
             now: Local::now(),
             hits: Vec::new(),
             prompt: None,
+            rollback: None,
             can_change: false,
         };
         screen.set_snapshots(snapshots);
@@ -430,6 +439,14 @@ impl Screen {
                     self.message = Some((Tone::Error, NEEDS_ROOT.into()));
                 }
             }
+            Key::Char('R') => {
+                if let Some(id) = self.current().map(|s| s.id) {
+                    if self.can_change {
+                        return Action::PlanRollback(id);
+                    }
+                    self.message = Some((Tone::Error, NEEDS_ROOT.into()));
+                }
+            }
             Key::Char('x') | Key::Delete => {
                 if let Some(id) = self.current().map(|s| s.id) {
                     self.ask(Prompt::ConfirmDelete(id), String::new());
@@ -522,7 +539,28 @@ impl Screen {
         Action::None
     }
 
+    /// Show a rollback plan: the popup waits for y.
+    pub fn show_rollback(&mut self, id: u64, mut lines: Vec<(Tone, String)>) {
+        lines.push((Tone::Plain, String::new()));
+        lines.push((Tone::Error, "y rolls back now; any other key cancels".into()));
+        self.overlay =
+            Some(Overlay::Text(Page { title: format!("roll back to snapshot #{id}?"), lines, scroll: 0 }));
+        self.rollback = Some(id);
+        self.mode = Mode::Overlay;
+    }
+
     fn overlaid(&mut self, key: Key, page_height: usize) -> Action {
+        if self.rollback.take().is_some() {
+            // Like the delete prompt: only y, never Enter.
+            self.overlay = None;
+            self.mode = Mode::Browse;
+            return if matches!(key, Key::Char('y') | Key::Char('Y')) {
+                Action::Rollback
+            } else {
+                self.message = Some((Tone::Dim, "no rollback".into()));
+                Action::CancelRollback
+            };
+        }
         let mut close = false;
         match &mut self.overlay {
             None => close = true,
@@ -591,6 +629,9 @@ impl Screen {
                 ("esc", "back".into()),
                 ("q", "quit".into()),
             ],
+            (Mode::Overlay, _) if self.rollback.is_some() => {
+                vec![("y", "roll back".into()), ("any other key", "cancel".into())]
+            }
             (Mode::Overlay, _) => {
                 vec![("↑↓", "scroll".into()), ("esc", "close".into()), ("q", "quit".into())]
             }
@@ -613,6 +654,7 @@ impl Screen {
                         keys.push(("d", "describe".into()));
                         keys.push(("p", "keep".into()));
                         keys.push(("x", "delete".into()));
+                        keys.push(("R", "rollback".into()));
                     }
                 }
                 keys.push(("/", "search".into()));
@@ -692,6 +734,7 @@ fn help_page() -> Page {
         ("d", "describe: change the description"),
         ("p", "keep (pin) or unkeep: kept ones are never pruned"),
         ("x  Del", "delete, after y to confirm"),
+        ("R", "roll back to it: shows every check and the plan, then y"),
         ("Esc", "unmark, or clear the search"),
         ("r", "reload (it also reloads when snapshots come and go)"),
         ("q", "quit"),
@@ -978,6 +1021,20 @@ mod tests {
         assert_eq!(press(&mut s, &[Key::Char('x'), Key::Enter]), Action::None, "Enter is not yes");
         assert_eq!(press(&mut s, &[Key::Char('x'), Key::Char('y')]), Action::Delete(5));
         assert_eq!(press(&mut s, &[Key::Up, Key::Delete, Key::Char('y')]), Action::Delete(4));
+    }
+
+    #[test]
+    fn a_rollback_needs_its_plan_and_a_y() {
+        let mut s = screen(&["root"]);
+        assert_eq!(press(&mut s, &[Key::Char('R')]), Action::None, "not as a user");
+        s.can_change = true;
+        assert_eq!(press(&mut s, &[Key::Char('R')]), Action::PlanRollback(5));
+        s.show_rollback(5, vec![(Tone::Plain, "root subvolume: @".into())]);
+        assert_eq!(press(&mut s, &[Key::Enter]), Action::CancelRollback, "Enter is not yes");
+        assert_eq!(s.mode, Mode::Browse);
+        s.show_rollback(5, vec![]);
+        assert_eq!(press(&mut s, &[Key::Char('y')]), Action::Rollback);
+        assert_eq!((s.mode, s.rollback), (Mode::Browse, None));
     }
 
     #[test]

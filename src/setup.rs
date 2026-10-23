@@ -89,12 +89,12 @@ pub fn without_subvolids(fstab: &str) -> Option<(String, Vec<String>)> {
 }
 
 /// The top-level subvolume (ID 5) mounted on a private directory, unmounted on drop.
-struct TopLevel {
-    path: PathBuf,
+pub struct TopLevel {
+    pub path: PathBuf,
 }
 
 impl TopLevel {
-    fn mount(device: &str) -> Result<TopLevel> {
+    pub fn mount(device: &str) -> Result<TopLevel> {
         let path = PathBuf::from(format!("/run/btrfs-patrol-{}", std::process::id()));
         std::fs::create_dir(&path).map_err(|e| err!("{}: {e}", path.display()))?;
         if let Err(e) = run("mount", &["-o", "subvolid=5", device, &path.to_string_lossy()]) {
@@ -113,7 +113,7 @@ impl Drop for TopLevel {
     }
 }
 
-fn run(program: &str, args: &[&str]) -> Result<String> {
+pub fn run(program: &str, args: &[&str]) -> Result<String> {
     let output = Command::new(program).args(args).output().map_err(|e| err!("{program}: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

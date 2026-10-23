@@ -13,7 +13,7 @@ use crate::error::Result;
 use crate::kernel::{self, ESP, MODULES};
 use crate::mounts::{self, Mount, find_mount};
 use crate::snapshot::{ROOT, Snapshot};
-use crate::{App, bail, btrfs, err, system};
+use crate::{App, bail, btrfs, entries, err, system};
 
 /// What a run of snapshot-taking did, for whoever reports it.
 #[derive(Debug, Default)]
@@ -25,6 +25,8 @@ pub struct Taken {
     pub warnings: Vec<String>,
     /// Subvolumes skipped because a rollback of them waits for a reboot.
     pub skipped: Vec<String>,
+    /// What changed in the boot menu.
+    pub entries: Vec<String>,
 }
 
 /// The subvolumes a snapshot command takes: the named ones, or every one it
@@ -132,7 +134,47 @@ pub fn take_snapshots(
         }
     }
     kernel::collect_garbage(&app.store)?;
+    let (infos, warnings) = sync_entries(app);
+    taken.entries = infos;
+    taken.warnings.extend(warnings);
     Ok(taken)
+}
+
+/// Make the boot menu match the snapshots, after anything that adds or
+/// removes them. Never fails the caller - a full or missing ESP is no reason
+/// to lose the snapshot just taken - so problems come back as warnings.
+pub fn sync_entries(app: &App) -> (Vec<String>, Vec<String>) {
+    let mut infos = Vec::new();
+    let has_ours = Path::new(ESP).join("loader/entries").is_dir()
+        && std::fs::read_dir(Path::new(ESP).join("loader/entries")).is_ok_and(|d| {
+            d.filter_map(|e| e.ok())
+                .any(|e| e.file_name().to_string_lossy().starts_with(entries::ENTRY_PREFIX))
+        });
+    if app.config.boot_entries == 0 && !has_ours {
+        return (infos, Vec::new());
+    }
+    let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
+    match entries::sync(app, Path::new(ESP), &cmdline) {
+        Ok(synced) => {
+            infos.extend(synced.removed.iter().map(|id| format!("removed the boot entry for snapshot {id}")));
+            if !synced.written.is_empty() {
+                let ids: Vec<String> = synced.written.iter().map(|id| id.to_string()).collect();
+                infos.push(format!("boot menu: snapshot {}", ids.join(", ")));
+            }
+            (infos, Vec::new())
+        }
+        Err(e) => (infos, vec![format!("could not update the snapshot boot entries: {e}")]),
+    }
+}
+
+fn report_entries(app: &App) {
+    let (infos, warnings) = sync_entries(app);
+    for info in infos {
+        app.info(&info);
+    }
+    for warning in warnings {
+        crate::warn(app.color, &warning);
+    }
 }
 
 fn of(app: &App, snapshot: &Snapshot) -> String {
@@ -154,6 +196,9 @@ pub fn cmd_snapshot(app: &App, description: &str, keep: bool, names: &[String], 
     }
     for snapshot in &taken.pruned {
         app.info(&format!("pruned snapshot {}", snapshot.id));
+    }
+    for info in &taken.entries {
+        app.info(info);
     }
     for warning in &taken.warnings {
         crate::warn(app.color, warning);
@@ -236,6 +281,7 @@ pub fn cmd_delete(app: &App, selector: &str, yes: bool) -> Result<u8> {
     for id in delete(app, &ids)? {
         app.info(&format!("deleted snapshot {id}"));
     }
+    report_entries(app);
     Ok(0)
 }
 
@@ -257,6 +303,7 @@ pub fn cmd_prune(app: &App) -> Result<u8> {
     if pruned.is_empty() {
         app.info("nothing to prune");
     }
+    report_entries(app);
     Ok(0)
 }
 

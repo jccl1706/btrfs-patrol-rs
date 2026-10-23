@@ -46,10 +46,11 @@ max_snapshots = 50
 # has no modules for. About 40 MB per distinct kernel and initramfs.
 store_kernels = true
 
-# How many of the newest snapshots get a systemd-boot entry, so a system too
-# broken to log in to can be booted from a snapshot and rolled back from
+# How many of the newest root snapshots get a systemd-boot entry, so a system
+# too broken to log in to can be booted from a snapshot and rolled back from
 # there. 0 writes none, which is the default. Entries boot the snapshot
-# read-only, with the kernel stored alongside it.
+# read-only, with its stored kernel, which is copied to <ESP>/btrfs-patrol
+# (about 40 MB per distinct kernel). They are listed below Arch's own.
 entries = 0
 
 [pacman]

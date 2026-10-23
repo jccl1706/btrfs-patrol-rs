@@ -5,11 +5,13 @@ mod btrfs;
 mod check;
 mod config;
 mod diff;
+mod entries;
 mod error;
 mod hook;
 mod kernel;
 mod manage;
 mod mounts;
+mod rollback;
 mod selector;
 mod setup;
 mod snapshot;
@@ -83,6 +85,16 @@ enum Command {
     },
     /// Delete each subvolume's oldest snapshots beyond its max_snapshots
     Prune,
+    /// Roll a subvolume back to one of its snapshots, then reboot to use it
+    Rollback {
+        id: u64,
+        /// Don't ask for confirmation
+        #[arg(short, long)]
+        yes: bool,
+        /// Run every check and show the plan, without changing anything
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+    },
     /// Set the system up: the snapshots subvolume, its mount, the timer
     Setup {
         /// Show what would be done, change nothing
@@ -298,6 +310,7 @@ fn run(cli: Cli) -> Result<u8> {
             | Command::Delete { .. }
             | Command::Prune
             | Command::PacmanHook { .. }
+            | Command::Rollback { .. }
     );
     if changes {
         require_root("changing snapshots")?;
@@ -313,6 +326,7 @@ fn run(cli: Cli) -> Result<u8> {
         Command::Delete { selector, yes } => manage::cmd_delete(&app, &selector, yes),
         Command::Prune => manage::cmd_prune(&app),
         Command::PacmanHook { when } => Ok(hook::run(&app, &when)),
+        Command::Rollback { id, yes, dry_run } => rollback::cmd_rollback(&app, id, yes, dry_run),
         Command::List { selector, verbose } => cmd_list(&app, selector.as_deref(), verbose),
         Command::Diff { old, new } => cmd_diff(&app, old, new),
         Command::Check => cmd_check(&app),

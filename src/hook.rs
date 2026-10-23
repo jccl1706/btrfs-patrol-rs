@@ -90,6 +90,9 @@ pub fn run(app: &App, when: &str) -> u8 {
             for s in &taken.pruned {
                 println!("btrfs-patrol: pruned snapshot {}", s.id);
             }
+            for info in &taken.entries {
+                println!("btrfs-patrol: {info}");
+            }
             for warning in &taken.warnings {
                 eprintln!("btrfs-patrol: warning: {warning}");
             }

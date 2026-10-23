@@ -94,7 +94,7 @@ sudo reboot                      # into the normal entry
 A snapshot booted this way reports itself as *degraded*: services that
 write to `/` fail on a read-only root (pacman's gpg-agent sockets,
 tmpfiles, lastlog). That is expected; it is there to roll back from.
-`systemctl reboot --boot-loader-entry='~btrfs-patrol-28.conf'` boots one
+`sudo systemctl reboot --boot-loader-entry=arch-btrfs-patrol-28.conf` boots one
 without catching the menu.
 
 No configuration is needed on the standard layout below; `btrfs-patrol

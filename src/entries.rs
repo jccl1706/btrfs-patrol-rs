@@ -18,13 +18,16 @@ use crate::snapshot::{ROOT, SUBVOLUME_NAME, Snapshot};
 use crate::{err, system};
 
 /// systemd-boot orders entries without a sort-key by file name, newest
-/// version first - with systemd's version comparison, where digits rank
-/// above letters and `~` below everything (`systemd-analyze compare-versions`
-/// shows it). Starting with `~` puts ours below every distribution entry,
-/// and still newest snapshot first among themselves (28 > 9).
-pub const ENTRY_PREFIX: &str = "~btrfs-patrol-";
+/// version first, with systemd's version comparison: digits rank above
+/// letters, and `a` is about as low as a valid name can start (`~` sorts
+/// lower still, but bootctl and `systemctl reboot --boot-loader-entry`
+/// reject it). `arch-btrfs-patrol-28` sorts below `arch.conf` and
+/// `arch-fallback.conf` - `b` before `f` - and below kernel-install's
+/// machine-id entries, newest snapshot first among ours (28 > 9).
+pub const ENTRY_PREFIX: &str = "arch-btrfs-patrol-";
 /// Names entries had before, still recognised for cleaning up.
-const OLD_PREFIXES: [&str; 2] = ["btrfs-patrol-", "00-btrfs-patrol-"];
+const OLD_PREFIXES: [&str; 3] = ["btrfs-patrol-", "00-btrfs-patrol-", "~btrfs-patrol-"];
+/// Where entries' kernels and initramfs images go on the ESP.
 pub const ESP_DIR: &str = "btrfs-patrol";
 
 /// The kernel command line that boots a snapshot, from the running one.
@@ -231,8 +234,9 @@ mod tests {
         for name in ["arch.conf", "btrfs-patrol-12.conf", "btrfs-patrol-x.conf", "btrfs-patrol-3.conf.bak"] {
             std::fs::write(dir.path().join(name), "").unwrap();
         }
-        std::fs::write(dir.path().join("~btrfs-patrol-7.conf"), "").unwrap();
-        std::fs::write(dir.path().join("00-btrfs-patrol-5.conf"), "").unwrap();
+        std::fs::write(dir.path().join("arch-btrfs-patrol-7.conf"), "").unwrap();
+        std::fs::write(dir.path().join("~btrfs-patrol-5.conf"), "").unwrap();
+        std::fs::write(dir.path().join("arch-fallback.conf"), "").unwrap();
         let mut ids: Vec<u64> = ours(dir.path()).into_iter().map(|(id, _)| id).collect();
         ids.sort();
         assert_eq!(ids, [5, 7, 12], "the current name and the old ones");

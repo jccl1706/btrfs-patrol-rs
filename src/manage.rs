@@ -148,7 +148,8 @@ pub fn sync_entries(app: &App) -> (Vec<String>, Vec<String>) {
     let has_ours = Path::new(ESP).join("loader/entries").is_dir()
         && std::fs::read_dir(Path::new(ESP).join("loader/entries")).is_ok_and(|d| {
             d.filter_map(|e| e.ok())
-                .any(|e| e.file_name().to_string_lossy().starts_with(entries::ENTRY_PREFIX))
+                // Any name ours ever had, so old entries are cleaned up too.
+                .any(|e| e.file_name().to_string_lossy().contains("btrfs-patrol-"))
         });
     if app.config.boot_entries == 0 && !has_ours {
         return (infos, Vec::new());

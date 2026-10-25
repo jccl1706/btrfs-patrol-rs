@@ -78,6 +78,46 @@ pub fn entry_text(title: &str, version: &str, linux: &str, initrds: &[String], o
     text
 }
 
+/// How long what a snapshot is about may be in the boot menu: the line
+/// should fit an 80-column firmware console with the rest of the title.
+const TITLE_WHAT: usize = 44;
+
+/// What a snapshot is about, as the boot menu shows it. For a pacman
+/// transaction that is the packages ("pacman: 7zip, fd +25 more"), not
+/// the command line, which can be long and say little ("pacman -U
+/// /home/jc/Projects/..."). ASCII only: the firmware's font has nothing
+/// else, and draws "…" or an accent as junk.
+fn boot_what(s: &Snapshot) -> String {
+    let text = crate::table::printable(&s.description);
+    let text = text.trim();
+    let what = match s.kind.as_str() {
+        k if k.starts_with("pacman") || k.starts_with("dnf") => {
+            let tool = k.split('-').next().unwrap_or(k);
+            match text.split_once(": ") {
+                Some((_, packages)) => format!("{tool}: {packages}"),
+                None if text.is_empty() => format!("{tool} transaction"),
+                None => text.to_owned(),
+            }
+        }
+        "timer" if text.is_empty() => "daily".to_owned(),
+        "rollback" if text.is_empty() => "before a rollback".to_owned(),
+        kind if text.is_empty() => kind.to_owned(),
+        _ => text.to_owned(),
+    };
+    let ascii: String = what
+        .replace('…', "...")
+        .chars()
+        .map(|c| if c.is_ascii() && !c.is_ascii_control() { c } else { '?' })
+        .collect();
+    let ascii = ascii.split_whitespace().collect::<Vec<_>>().join(" ");
+    if ascii.len() <= TITLE_WHAT { ascii } else { format!("{}...", ascii[..TITLE_WHAT - 3].trim_end()) }
+}
+
+/// "Snapshot 16 | 2026-10-25 15:52 | pacman: nft-patrol-git"
+pub fn boot_title(s: &Snapshot) -> String {
+    format!("Snapshot {} | {} | {}", s.id, s.created.format("%Y-%m-%d %H:%M"), boot_what(s))
+}
+
 /// Microcode images on the ESP, which load before any initramfs.
 fn microcode(esp: &Path) -> Vec<String> {
     ["intel-ucode.img", "amd-ucode.img"]
@@ -157,9 +197,7 @@ pub fn sync(app: &App, esp: &Path, cmdline: &str) -> Result<Synced> {
         }
         let mut initrds = microcode(esp);
         initrds.push(format!("/{ESP_DIR}/{}", boot.initramfs));
-        let description =
-            if s.description.is_empty() { s.kind.clone() } else { crate::table::printable(&s.description) };
-        let title = format!("Snapshot {} - {} - {}", s.id, s.created.format("%Y-%m-%d %H:%M"), description);
+        let title = boot_title(s);
         let subvolume =
             format!("{}/{}/{SUBVOLUME_NAME}", app.config.snapshots_subvolume.trim_matches('/'), s.id);
         let text = entry_text(
@@ -195,6 +233,24 @@ pub fn sync(app: &App, esp: &Path, cmdline: &str) -> Result<Synced> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn boot_menu_titles() {
+        let mut s = crate::snapshot::tests::snapshot(16);
+        s.kind = "pacman-pre".into();
+        s.description = "pacman -U /home/jc/Projects/nft-patrol-…: nft-patrol-git".into();
+        assert_eq!(boot_title(&s), "Snapshot 16 | 2026-09-21 22:25 | pacman: nft-patrol-git");
+        s.description = "pacman -Syu --needed yazi udiskie imv f…: 7zip, fd, ffmpegthumbnailer, imv, jq, poppler +25 more".into();
+        let t = boot_title(&s);
+        assert!(t.is_ascii() && t.ends_with("...") && t.len() <= 80, "{t}");
+        assert!(t.contains("pacman: 7zip, fd, ffmpegthumbnailer"), "{t}");
+        s.kind = "timer".into();
+        s.description = String::new();
+        assert_eq!(boot_title(&s), "Snapshot 16 | 2026-09-21 22:25 | daily");
+        s.kind = "manual".into();
+        s.description = "before the café\nupgrade".into();
+        assert_eq!(boot_title(&s), "Snapshot 16 | 2026-09-21 22:25 | before the caf? upgrade");
+    }
 
     const CMDLINE: &str = "initrd=\\intel-ucode.img initrd=\\initramfs-linux.img rd.luks.name=fe18=cryptroot \
                            rd.luks.options=discard root=UUID=ecdb rootflags=subvol=@,compress=zstd rootfstype=btrfs rw quiet resume=UUID=x";

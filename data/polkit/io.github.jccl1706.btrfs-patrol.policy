@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  `pkexec /usr/bin/btrfs-patrol tui` runs the dashboard as root - snapshots,
+  their sizes, rollback - with the password asked by the desktop's polkit
+  agent rather than in the terminal. This action gives that prompt its own
+  words instead of polkit's generic "run ... as the super user".
+
+  auth_admin_keep: at the desk, the password holds for a few minutes, as
+  sudo's does - so a launcher can ask for it first, with only the prompt on
+  screen, and then open the terminal without asking again.
+-->
+<policyconfig>
+  <vendor>btrfs-patrol</vendor>
+  <vendor_url>https://github.com/jccl1706/btrfs-patrol-rs</vendor_url>
+  <icon_name>drive-harddisk</icon_name>
+  <action id="io.github.jccl1706.btrfs-patrol">
+    <description>Manage system snapshots</description>
+    <message>Authentication is required to manage system snapshots</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/btrfs-patrol</annotate>
+  </action>
+</policyconfig>

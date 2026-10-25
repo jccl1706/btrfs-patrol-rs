@@ -8,6 +8,7 @@ arch=('x86_64')
 url="https://github.com/jccl1706/btrfs-patrol-rs"
 license=('GPL-3.0-or-later')
 depends=('btrfs-progs' 'util-linux' 'gcc-libs' 'glibc')
+optdepends=('polkit: pkexec btrfs-patrol tui, with the password asked in a window')
 makedepends=('cargo' 'git')
 provides=("$_pkgname")
 conflicts=("$_pkgname")
@@ -44,6 +45,8 @@ check() {
 package() {
   cd "$_pkgname"
   install -Dm755 target/release/btrfs-patrol -t "$pkgdir/usr/bin/"
+  # pkexec /usr/bin/btrfs-patrol: the password prompt's own words
+  install -Dm644 data/polkit/io.github.jccl1706.btrfs-patrol.policy -t "$pkgdir/usr/share/polkit-1/actions/"
   install -Dm644 data/alpm/*.hook -t "$pkgdir/usr/share/libalpm/hooks/"
   install -Dm644 data/systemd/btrfs-patrol-snapshot.{service,timer} data/systemd/btrfs-patrol-status.service -t "$pkgdir/usr/lib/systemd/system/"
   install -Dm644 config.toml.example README.md -t "$pkgdir/usr/share/doc/$_pkgname/"

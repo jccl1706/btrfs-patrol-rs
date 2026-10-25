@@ -1,1 +1,5 @@
 /target
+
+# makepkg's work in packaging/arch: the clone, its build trees, the package
+/packaging/arch/*/
+/packaging/arch/*.pkg.tar.*

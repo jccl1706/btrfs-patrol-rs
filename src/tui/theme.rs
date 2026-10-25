@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! How the TUI looks: Tokyo Night colours, Nerd Font icons, and the small
+//! How the TUI looks: Adwaita dark colours, Nerd Font icons, and the small
 //! formatting rules (times, sizes) the panels share.
 //!
 //! Each has a fallback. Without a true-colour terminal the palette is the
@@ -28,21 +28,21 @@ pub struct Palette {
     pub on_pill: Color,
 }
 
-/// Tokyo Night (night), the palette of the rest of the desktop.
-pub const TOKYO_NIGHT: Palette = Palette {
-    fg: Color::Rgb(0xc0, 0xca, 0xf5),
-    muted: Color::Rgb(0x56, 0x5f, 0x89),
-    subtle: Color::Rgb(0xa9, 0xb1, 0xd6),
-    border: Color::Rgb(0x3b, 0x42, 0x61),
-    selection: Color::Rgb(0x28, 0x34, 0x57),
-    blue: Color::Rgb(0x7a, 0xa2, 0xf7),
-    cyan: Color::Rgb(0x7d, 0xcf, 0xff),
-    purple: Color::Rgb(0xbb, 0x9a, 0xf7),
-    green: Color::Rgb(0x9e, 0xce, 0x6a),
-    yellow: Color::Rgb(0xe0, 0xaf, 0x68),
-    orange: Color::Rgb(0xff, 0x9e, 0x64),
-    red: Color::Rgb(0xf7, 0x76, 0x8e),
-    on_pill: Color::Rgb(0x1a, 0x1b, 0x26),
+/// Adwaita dark, GNOME's palette - the rest of the desktop's.
+pub const ADWAITA_DARK: Palette = Palette {
+    fg: Color::Rgb(0xff, 0xff, 0xff),
+    muted: Color::Rgb(0x77, 0x76, 0x7b),
+    subtle: Color::Rgb(0xc0, 0xbf, 0xbc),
+    border: Color::Rgb(0x3d, 0x3d, 0x42),
+    selection: Color::Rgb(0x36, 0x36, 0x3a),
+    blue: Color::Rgb(0x78, 0xae, 0xed),
+    cyan: Color::Rgb(0x99, 0xc1, 0xf1),
+    purple: Color::Rgb(0xdc, 0x8a, 0xdd),
+    green: Color::Rgb(0x8f, 0xf0, 0xa4),
+    yellow: Color::Rgb(0xf8, 0xe4, 0x5c),
+    orange: Color::Rgb(0xff, 0xa3, 0x48),
+    red: Color::Rgb(0xff, 0x7b, 0x63),
+    on_pill: Color::Rgb(0x22, 0x22, 0x26),
 };
 
 /// The terminal's own colours, for terminals without true colour.
@@ -165,7 +165,7 @@ impl Look {
             (true, true) => UNICODE,
             (true, false) => NERD,
         };
-        Look { color, palette: if truecolor { TOKYO_NIGHT } else { ANSI }, icons, unicode }
+        Look { color, palette: if truecolor { ADWAITA_DARK } else { ANSI }, icons, unicode }
     }
 
     pub fn fg(&self, color: Color) -> Style {

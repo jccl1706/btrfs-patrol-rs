@@ -107,7 +107,7 @@ Selectors: `3`, `1,10,20-23`, or one of `date=2026-10`, `time=16:`,
 
 ### The TUI
 
-A dashboard in Tokyo Night: the snapshot list with an icon for each kind
+A dashboard in Adwaita dark (the desktop's palette): the snapshot list with an icon for each kind
 (pacman, timer, manual, rollback) and a lock on kept ones, a detail panel
 beside it (under it on narrow terminals), and the disk's use in the header.
 

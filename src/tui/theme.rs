@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! How the TUI looks: Adwaita dark colours, Nerd Font icons, and the small
+//! How the TUI looks: Nord colours, Nerd Font icons, and the small
 //! formatting rules (times, sizes) the panels share.
 //!
 //! Each has a fallback. Without a true-colour terminal the palette is the
@@ -28,21 +28,21 @@ pub struct Palette {
     pub on_pill: Color,
 }
 
-/// Adwaita dark, GNOME's palette - the rest of the desktop's.
-pub const ADWAITA_DARK: Palette = Palette {
-    fg: Color::Rgb(0xff, 0xff, 0xff),
-    muted: Color::Rgb(0x77, 0x76, 0x7b),
-    subtle: Color::Rgb(0xc0, 0xbf, 0xbc),
-    border: Color::Rgb(0x3d, 0x3d, 0x42),
-    selection: Color::Rgb(0x36, 0x36, 0x3a),
-    blue: Color::Rgb(0x78, 0xae, 0xed),
-    cyan: Color::Rgb(0x99, 0xc1, 0xf1),
-    purple: Color::Rgb(0xdc, 0x8a, 0xdd),
-    green: Color::Rgb(0x8f, 0xf0, 0xa4),
-    yellow: Color::Rgb(0xf8, 0xe4, 0x5c),
-    orange: Color::Rgb(0xff, 0xa3, 0x48),
-    red: Color::Rgb(0xff, 0x7b, 0x63),
-    on_pill: Color::Rgb(0x22, 0x22, 0x26),
+/// Nord (nordtheme.com) - the rest of the desktop's palette.
+pub const NORD: Palette = Palette {
+    fg: Color::Rgb(0xec, 0xef, 0xf4),
+    muted: Color::Rgb(0x61, 0x6e, 0x88),
+    subtle: Color::Rgb(0xd8, 0xde, 0xe9),
+    border: Color::Rgb(0x4c, 0x56, 0x6a),
+    selection: Color::Rgb(0x43, 0x4c, 0x5e),
+    blue: Color::Rgb(0x88, 0xc0, 0xd0),
+    cyan: Color::Rgb(0x8f, 0xbc, 0xbb),
+    purple: Color::Rgb(0xb4, 0x8e, 0xad),
+    green: Color::Rgb(0xa3, 0xbe, 0x8c),
+    yellow: Color::Rgb(0xeb, 0xcb, 0x8b),
+    orange: Color::Rgb(0xd0, 0x87, 0x70),
+    red: Color::Rgb(0xbf, 0x61, 0x6a),
+    on_pill: Color::Rgb(0x2e, 0x34, 0x40),
 };
 
 /// The terminal's own colours, for terminals without true colour.
@@ -165,7 +165,7 @@ impl Look {
             (true, true) => UNICODE,
             (true, false) => NERD,
         };
-        Look { color, palette: if truecolor { ADWAITA_DARK } else { ANSI }, icons, unicode }
+        Look { color, palette: if truecolor { NORD } else { ANSI }, icons, unicode }
     }
 
     pub fn fg(&self, color: Color) -> Style {
